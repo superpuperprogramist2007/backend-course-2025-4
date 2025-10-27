@@ -1,17 +1,16 @@
-
+// main.js - ВИПРАВЛЕНА ВЕРСІЯ (з парсингом JSON Lines)
 
 const http = require('http');
-const fs = require('fs'); // Використаємо 'fs.promises' для async в Частині 2
+const fs = require('fs').promises; // Використовуємо 'fs.promises'
 const { program } = require('commander');
-const url = require('url'); // Потрібен для Частини 2
-const { XMLBuilder } = require('fast-xml-parser'); // Потрібен для Частини 2
+const url = require('url');
+const { XMLBuilder } = require('fast-xml-parser');
 
-
-
+// --- ЧАСТИНА 1: Налаштування Commander ---
 program
-  .requiredOption('-i, --input <type>', "шлях до файлу, який даємо для читання") 
-  .requiredOption('-h, --host <type>', "адреса сервера") 
-  .requiredOption('-p, --port <type>', "порт сервера"); 
+  .requiredOption('-i, --input <type>', "шлях до файлу, який даємо для читання")
+  .requiredOption('-h, --host <type>', "адреса сервера")
+  .requiredOption('-p, --port <type>', "порт сервера");
 
 program.parse(process.argv);
 const options = program.opts();
@@ -20,98 +19,102 @@ const inputFile = options.input;
 const host = options.host;
 const port = options.port;
 
-// --- ЧАСТИНА 1: Перевірка файлу ---
-
-if (!fs.existsSync(inputFile)) {
-  console.error('Cannot find input file'); 
+// --- ЧАСТИНА 1: Перевірка файлу (синхронна) ---
+const fsSync = require('fs');
+if (!fsSync.existsSync(inputFile)) {
+  console.error('Cannot find input file');
   process.exit(1);
 }
 
-// --- ЧАСТИНА 1: Створення HTTP-сервера ---
+// --- ЧАСТИНА 2: Оптимізація ---
+let flightsData = []; // Глобальна змінна
 
-const server = http.createServer(async (req, res) => {
+async function startServer() {
   
-  console.log(`Обробка запиту: ${req.url}`);
-  
- 
-
-const server = http.createServer(async (req, res) => {
-  console.log(`Обробка запиту: ${req.url}`);
-  
-  
-
-  // 1. Отримуємо параметри URL
-  const parsedUrl = url.parse(req.url, true);
-  const queryParams = parsedUrl.query;
-
-  const showDate = queryParams.date === 'true'; // ?date=true [cite: 80]
-  const minAirTime = parseFloat(queryParams.airtime_min); // ?airtime_min=X [cite: 81]
-
+  // 1. ЗАВАНТАЖУЄМО ДАНІ ОДИН РАЗ (з логікою для JSONL)
   try {
-    // 2. Асинхронно читаємо JSON файл [cite: 48, 52]
-    const fileData = await fs.promises.readFile(inputFile, 'utf-8');
-    const flightsData = JSON.parse(fileData);
+    console.log(`Завантаження даних з ${inputFile}... Це може зайняти хвилину...`);
+    const fileData = await fs.readFile(inputFile, 'utf-8');
 
-    // 3. Фільтруємо дані
-    let filteredFlights = flightsData;
+    // === ПОЧАТОК ЗМІНЕНОЇ ЛОГІКИ ===
+    // Файл 'flights-1m.json' - це, ймовірно, JSON Lines (jsonl),
+    // де кожен рядок - це окремий JSON.
+    
+    const lines = fileData.split('\n'); // Ділимо файл на рядки
+    flightsData = []; // Ініціалізуємо масив
 
-    // Фільтр ?airtime_min=X [cite: 81]
-    if (!isNaN(minAirTime)) {
-      filteredFlights = filteredFlights.filter(flight => flight.AIR_TIME > minAirTime);
+    for (const line of lines) {
+      if (line.trim() === '') {
+        continue; // Пропускаємо порожні рядки (напр. в кінці файлу)
+      }
+      try {
+        const jsonObject = JSON.parse(line); // Парсимо КОЖЕН рядок
+        flightsData.push(jsonObject);
+      } catch (parseError) {
+        // Якщо якийсь рядок пошкоджений, ми його пропустимо
+        console.warn(`Помилка парсингу рядка, рядок пропущено: ${parseError.message}`);
+      }
+    }
+    // === КІНЕЦЬ ЗМІНЕНОЇ ЛОГІКИ ===
+
+    if (flightsData.length === 0) {
+      console.error('Дані не завантажено, файл може бути порожнім або повністю пошкодженим.');
+      process.exit(1);
     }
 
-    // 4. Форматуємо дані для XML
-    const xmlReadyData = filteredFlights.map(flight => {
-      const flightRecord = {
-        // Вихідні поля: AIR_TIME, DISTANCE 
-        AIR_TIME: flight.AIR_TIME,
-        DISTANCE: flight.DISTANCE,
-      };
-
-      // Додаємо дату, якщо ?date=true [cite: 80, 82]
-      if (showDate) {
-        flightRecord.FL_DATE = flight.FL_DATE;
-      }
-      
-      return flightRecord;
-    });
-
-    // 5. Створюємо XML за допомогою fast-xml-parser 
-    const builderOptions = {
-      format: true, // Для красивого виводу
-      ignoreAttributes: false,
-    };
-    const builder = new XMLBuilder(builderOptions);
-    
-    // Структура XML: <flights><flight>...</flight></flights> [cite: 83, 84]
-    const xmlObject = {
-      flights: {
-        flight: xmlReadyData
-      }
-    };
-    const xmlOutput = builder.build(xmlObject);
-
-    // 6. Надсилаємо відповідь XML [cite: 54]
-    res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
-    res.end(xmlOutput);
-
-  } catch (error) {
-    console.error('Помилка обробки запиту:', error);
-    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.end('Внутрішня помилка сервера');
+    console.log(`Дані успішно завантажено. ${flightsData.length} записів.`);
+  } catch (err) {
+    console.error('Не вдалося завантажити файл даних:', err);
+    process.exit(1);
   }
-});
 
+  // 2. СТВОРЮЄМО СЕРВЕР
+  const server = http.createServer((req, res) => {
+    console.log(`Обробка запиту: ${req.url}`);
+    
+    const parsedUrl = url.parse(req.url, true);
+    const queryParams = parsedUrl.query;
+    const showDate = queryParams.date === 'true';
+    const minAirTime = parseFloat(queryParams.airtime_min);
 
-  
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end(`Сервер працює. Файл ${inputFile} знайдено.`);
+    try {
+      let filteredFlights = flightsData; 
 
-});
+      if (!isNaN(minAirTime)) {
+        filteredFlights = filteredFlights.filter(flight => flight.AIR_TIME > minAirTime);
+      }
 
-// --- ЧАСТИНА 1: Запуск сервера ---
+      const xmlReadyData = filteredFlights.map(flight => {
+        const flightRecord = {
+          AIR_TIME: flight.AIR_TIME,
+          DISTANCE: flight.DISTANCE,
+        };
+        if (showDate) {
+          flightRecord.FL_DATE = flight.FL_DATE;
+        }
+        return flightRecord;
+      });
 
-server.listen(port, host, () => {
-  console.log(`Сервер запущено на http://${host}:${port}`); 
-});
+      const builderOptions = { format: true, ignoreAttributes: false };
+      const builder = new XMLBuilder(builderOptions);
+      const xmlObject = { flights: { flight: xmlReadyData } };
+      const xmlOutput = builder.build(xmlObject);
 
+      res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
+      res.end(xmlOutput);
+
+    } catch (error) {
+      console.error('Помилка обробки запиту:', error);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Внутрішня помилка сервера');
+    }
+  });
+
+  // 3. ЗАПУСКАЄМО СЕРВЕР
+  server.listen(port, host, () => {
+    console.log(`Сервер запущено та готовий до прийому запитів на http://${host}:${port}`);
+  });
+}
+
+// Запускаємо головну функцію
+startServer();
