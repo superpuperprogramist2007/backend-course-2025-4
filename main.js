@@ -9,9 +9,9 @@ const { XMLBuilder } = require('fast-xml-parser'); // Потрібен для Ч
 // --- ЧАСТИНА 1: Налаштування Commander ---
 
 program
-  .requiredOption('-i, --input <type>', "шлях до файлу, який даємо для читання") [cite: 37]
-  .requiredOption('-h, --host <type>', "адреса сервера") [cite: 38]
-  .requiredOption('-p, --port <type>', "порт сервера"); [cite: 39]
+  .requiredOption('-i, --input <type>', "шлях до файлу, який даємо для читання") 
+  .requiredOption('-h, --host <type>', "адреса сервера") 
+  .requiredOption('-p, --port <type>', "порт сервера"); 
 
 program.parse(process.argv);
 const options = program.opts();
@@ -23,7 +23,7 @@ const port = options.port;
 // --- ЧАСТИНА 1: Перевірка файлу ---
 
 if (!fs.existsSync(inputFile)) {
-  console.error('Cannot find input file'); [cite: 40]
+  console.error('Cannot find input file'); 
   process.exit(1);
 }
 
@@ -46,7 +46,7 @@ const server = http.createServer(async (req, res) => {
 // --- ЧАСТИНА 1: Запуск сервера ---
 
 server.listen(port, host, () => {
-  console.log(`Сервер запущено на http://${host}:${port}`); [cite: 42]
+  console.log(`Сервер запущено на http://${host}:${port}`); 
 });
 
 // main.js - Кінець
